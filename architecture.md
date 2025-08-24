@@ -8,11 +8,11 @@
 ## Diagram Placeholders
 
 **System Architecture:** `/architecture.mmd`
-[![architecture](https://github.com/sina-ss/irancell-interview/blob/main/images/architecture.svg?raw=true)](https://github.com/sina-ss/irancell-interview/blob/main/images/architecture.svg?raw=true)
+[![architecture](https://github.com/sina-ss/irancell-interview/blob/main/images/architecture.png?raw=true)](https://github.com/sina-ss/irancell-interview/blob/main/images/architecture.png?raw=true)
 **Sequence (Happy Path + Failover):** `/sequence-happy-path.mmd`
-[![sequence-happy-path](https://github.com/sina-ss/irancell-interview/blob/main/images/sequence-happy-path.svg?raw=true)](https://github.com/sina-ss/irancell-interview/blob/main/images/sequence-happy-path.svg?raw=true)
+[![sequence-happy-path](https://github.com/sina-ss/irancell-interview/blob/main/images/sequence-happy-path.png?raw=true)](https://github.com/sina-ss/irancell-interview/blob/main/images/sequence-happy-path.png?raw=true)
 **Network & Security Zones:** `</network-security.mmd`
-[![network-security](https://github.com/sina-ss/irancell-interview/blob/main/images/network-security.svg?raw=true)](https://github.com/sina-ss/irancell-interview/blob/main/images/network-security.svg?raw=true)
+[![network-security](https://github.com/sina-ss/irancell-interview/blob/main/images/network-security.png?raw=true)](https://github.com/sina-ss/irancell-interview/blob/main/images/network-security.png?raw=true)
 ## 1. Core Component Responsibilities
 
 **Edge & Control**
