@@ -1,3 +1,6 @@
+> This file is **for myself** and does not need to be **seen by Irancell**.
+> I use this file to be able to determine the overall roadmap for myself.
+
 ## 1. Project Roadmap
 
 | **Phase**                               | **Goals**                                             | **Key Outputs**                                      | **Dependencies**            |
