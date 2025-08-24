@@ -1,0 +1,80 @@
+graph TB
+  subgraph DMZ["DMZ Network"]
+    WAF[WAF + DDoS]:::ctrl
+    LB[Load Balancer]:::ctrl
+    AG[API Gateway Cluster]:::ctrl
+  end
+
+  subgraph APP["Application Network"]
+    PS[Payments]:::core
+    WS[Wallet]:::core
+    LS[Ledger]:::core
+    FR[Fraud]:::core
+    FLG[Feature Flags]:::ctrl
+    IDP[Keycloak]:::ctrl
+  end
+
+  subgraph INTEG["Integration Network"]
+    ADA[PSP Adapter A]:::core
+    ADB[PSP Adapter B]:::core
+    WH[Webhook Handler]:::core
+    SFTP[SFTP - Settlement]:::ctrl
+  end
+
+  subgraph DATA["Data Network"]
+    CDB[(CockroachDB Cluster A)]:::data
+    KFK[(Kafka / Redpanda)]:::data
+    RDS[(Redis Cluster)]:::data
+    OBJ[(MinIO)]:::data
+  end
+
+  subgraph SEC["Security Services"]
+    HSM[HSM - Tokenization]:::ctrl
+    VLT["Vault - Secrets/KMS"]:::ctrl
+    SIEM["SIEM / Log Sink (optional)"]:::obs
+  end
+
+  subgraph MON["Observability (LGTM)"]
+    OTL[OTel Collectors]:::obs
+    PM[(Prometheus)]:::obs
+    AM[Alertmanager]:::obs
+    LK[(Loki)]:::obs
+    TP[(Tempo)]:::obs
+    GF[Grafana]:::obs
+  end
+
+  Internet --> WAF --> LB --> AG
+  AG -->|"mTLS+JWT"| PS
+  AG -->|"mTLS+JWT"| WS
+  PS -->|mTLS| LS
+  PS -->|mTLS| FR
+  PS -->|TLS| CDB
+  PS -->|SASL_SSL| KFK
+  PS -->|TLS| RDS
+  PS -->|HTTPS| VLT
+  LS --> HSM
+
+  ADA <-->|"mTLS+HMAC"| Internet
+  ADB <-->|"mTLS+HMAC"| Internet
+  WH <-->|"Allowlist + mTLS/HMAC"| Internet
+  SFTP <-->|SSH| Internet
+
+  %% Observability
+  AG --> OTL
+  PS --> OTL
+  WS --> OTL
+  LS --> OTL
+  FR --> OTL
+  WH --> OTL
+  OTL --> PM --> AM
+  OTL --> LK
+  OTL --> TP
+  PM --> GF
+  LK --> GF
+  TP --> GF
+  LK --> SIEM
+
+  classDef ctrl fill:#e0f2f1,stroke:#00796b,stroke-width:2px;
+  classDef data fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
+  classDef obs fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+  classDef core fill:#e3f2fd,stroke:#1976d2,stroke-width:2px;
