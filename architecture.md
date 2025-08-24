@@ -8,22 +8,12 @@
 ## Diagram Placeholders
 
 **System Architecture:** `/architecture.mmd`
-
+[![architecture](https://github.com/sina-ss/irancell-interview/blob/main/images/architecture.svg?raw=true)](https://github.com/sina-ss/irancell-interview/blob/main/images/architecture.svg?raw=true)
 **Sequence (Happy Path + Failover):** `/sequence-happy-path.mmd`
-
+[![sequence-happy-path](https://github.com/sina-ss/irancell-interview/blob/main/images/sequence-happy-path.svg?raw=true)](https://github.com/sina-ss/irancell-interview/blob/main/images/sequence-happy-path.svg?raw=true)
 **Network & Security Zones:** `</network-security.mmd`
-
-Export hint:
-
-```bash
-mmdc -i architecture.mmd -o architecture.png
-mmdc -i sequence-happy-path.mmd -o sequence-happy-path.svg
-mmdc -i network-security.mmd -o network-security.png
-```
-
----
-
-## 1) Core Component Responsibilities
+[![network-security](https://github.com/sina-ss/irancell-interview/blob/main/images/network-security.svg?raw=true)](https://github.com/sina-ss/irancell-interview/blob/main/images/network-security.svg?raw=true)
+## 1. Core Component Responsibilities
 
 **Edge & Control**
 
@@ -60,7 +50,7 @@ mmdc -i network-security.mmd -o network-security.png
 
 ---
 
-## 2) Data Flow Patterns
+## 2. Data Flow Patterns
 
 **Idempotency (edge + service)**
 
@@ -89,7 +79,7 @@ mmdc -i network-security.mmd -o network-security.png
 
 ---
 
-## 3) Database Schema Design (CockroachDB and PostgreSQL)
+## 3. Database Schema Design (CockroachDB and PostgreSQL)
 
 > Both designs model the same entities; the **storage/layout** differs for locality, partitioning, and replication.
 
@@ -225,7 +215,7 @@ CREATE TABLE payments (
 
 ---
 
-## 4) API Specification Framework
+## 4. API Specification Framework
 
 **Standards**
 
@@ -271,7 +261,7 @@ X-Request-Signature: <HMAC>   # for webhooks
 
 ---
 
-## 5) Capacity Planning for 400 Concurrent Transactions
+## 5. Capacity Planning for 400 Concurrent Transactions
 
 **Assumptions**
 
@@ -320,7 +310,7 @@ If λ = 300 rps, and concurrent users N = 400, then average time in system `W = 
 
 ---
 
-## 6) Security Architecture Implementation
+## 6. Security Architecture Implementation
 
 **Network & Transport**
 
@@ -347,7 +337,7 @@ If λ = 300 rps, and concurrent users N = 400, then average time in system `W = 
 
 ---
 
-## 7) Integration Patterns & Protocols
+## 7. Integration Patterns & Protocols
 
 **Synchronous**
 
@@ -367,7 +357,7 @@ If λ = 300 rps, and concurrent users N = 400, then average time in system `W = 
 
 ---
 
-## 8) Deployment & Infrastructure Patterns
+## 8. Deployment & Infrastructure Patterns
 
 **Topology**
 
@@ -414,26 +404,3 @@ return resp
 **B) Example Adapter Retry Budget**
 
 - Try #1; if timeout/5xx → backoff `200ms * 2^i + jitter(0–100ms)`, max 2 retries, total ≤ 8s; then open breaker.
-
----
-
-## Session Log
-
-**Decisions made**
-
-- Use your **WAF→LB→GW** layering, **Wallet** as first-class, **HSM/Vault**, **Alertmanager**, **SFTP** path.
-- **Validation** in process; **Kafka** for webhooks with **DLQ/replay**.
-- **CRDB** dual-cluster active–passive via CDC/backup (RPO ≤ 5m); **PostgreSQL** remains a viable alternative.
-- **Ledger** append-only & idempotent; **Idempotency** = key + fingerprint + durable cache.
-
-**Open questions**
-
-1. Confirm CRDB dual-cluster vs single multi-region cluster preference.
-2. DR cutover mechanism (DNS vs anycast) and ownership.
-3. Keep SIEM sink alongside Loki? (optional)
-4. Need a separate **Policy Registry** service (or config-as-code only)?
-
-**Next actions**
-
-- Finalize hosting/DC posture & cutover plan.
-- Proceed to **Session 3:** SLOs, **OTEL+LGTM dashboards**, and **PromQL alert rules** (incl. `>4% / 5m` primary and an advisory guard-ed variant).
