@@ -1,86 +1,120 @@
+%% /architecture.mmd
 graph TB
-  %% Clients
   U[Mobile/Web/Partner Channels]:::edge
 
-  %% Primary DC (Active)
-  subgraph DC_A[Primary DC — Active]
-    GW[API Gateway / WAF<br/>TLS, mTLS, OAuth2, HMAC, Rate-limit,<br/>Idempotency-Key enforcement, PII scrubbing]:::core
-    PAY["Payments Service<br/>(Orchestration/Saga, Validation,<br/>PSP Routing, Outbox)"]:::core
-    ADP["PSP/Bank Adapters<br/>(CB/Retry/Timeout/Bulkhead,<br/>Signature/HMAC)"]:::core
-    WH["Webhook Ingest<br/>(Store-then-Process, Retry, DLQ)"]:::core
-    LED["Ledger Service<br/>(Double-entry)"]:::state
-    RCN["Reconciliation<br/>(T+0 stream, T+1 files)"]:::state
-    FRD["Fraud & Risk Controls<br/>(Velocity, device hooks)"]:::edge
-    FLG["Feature Flags / Kill-switches<br/>(Audit trail)"]:::ctrl
-    EV[("Kafka / Redpanda<br/>Event Bus")]:::data
-    DB[("PostgreSQL 16 OR CockroachDB<br/>Payments + Ledger")]:::data
-    RDS[("Redis<br/>Idempotency/Rate-limit/Locks")]:::data
-    OBJ[("MinIO / S3-compatible<br/>Webhook payloads, T+1 files")]:::data
-    KMS["Secrets / KMS<br/>(Vault/HSM)"]:::ctrl
-    IDP["IdP (OIDC / Keycloak)"]:::ctrl
+  %% Active Site (Tehran)
+  subgraph DC_A["Primary DC — Tehran (Active)"]
+    WAF[WAF + DDoS]:::ctrl
+    LB[Load Balancer]:::ctrl
+    GW[API Gateway Cluster\nTLS 1.3, mTLS, OAuth2, HMAC\nRate limit, Idempotency, PII scrub]:::core
 
-    %% Observability stack
-    OTL["OpenTelemetry Collectors"]:::obs
-    PM[("Prometheus")]:::obs
-    LK[("Loki")]:::obs
-    TP[("Tempo")]:::obs
-    GF["Grafana"]:::obs
+    IDP["Keycloak (OIDC/SAML)\nMFA, RBAC, svc accounts"]:::ctrl
+    FLG[Feature Flags/Kill-switches\nAudit trail]:::ctrl
+
+    PAY["Payments Service\nOrchestration/Saga, Routing,\nValidation (in-process), Outbox"]:::core
+    WAL[Wallet Service\nBalances, Reservations,\nCash-in/out]:::core
+    FRD[Fraud Service\nVelocity checks, device hooks,\nrule engine integ.]:::edge
+
+    ADP_A[PSP Adapter A\nTimeout/Retry+Jitter, CB, Bulkhead]:::core
+    ADP_B[PSP Adapter B\nFailover, health metrics]:::core
+    ADP_BANK[Bank Adapter\nDirect APIs, settlement assist]:::core
+
+    WH[Webhook Ingest\nAllowlist + mTLS/HMAC\nStore-then-ack]:::core
+
+    LED["Ledger Service\nDouble-entry, append-only,\nidempotent(event_id)"]:::state
+    RCN[Reconciliation\nT+0 stream, T+1 files, breaks→DLQ]:::state
+
+    EV[(Kafka / Redpanda\nEvents + Webhook topics\nDLQ + Replay)]:::data
+    DB[(CockroachDB — OLTP\nPayments + Ledger journal\nCluster A)]:::data
+    RDS[(Redis Cluster\nIdempotency, rate-limit, locks)]:::data
+    OBJ[(MinIO / S3-compat\nWebhook payloads, T+1 files)]:::data
+
+    KMS["Vault (Secrets/KMS)"]:::ctrl
+    HSM["HSM (Tokenization/Keys)"]:::ctrl
+
+    OTL[OTel Collectors]:::obs
+    PM[(Prometheus)]:::obs
+    AM[Alertmanager]:::obs
+    LK[(Loki)]:::obs
+    TP[(Tempo)]:::obs
+    GF[Grafana]:::obs
   end
 
-  %% Secondary DC (Passive / DR)
-  subgraph DC_B[Secondary DC — Passive/DR]
-    EV_B[("Kafka Mirror / Cluster")]:::data
-    DB_B[("Replica DB")]:::data
-    OBJ_B[("Object Store Replica")]:::data
-    OTL_B["OTEL Collectors"]:::obs
-    PM_B[("Prometheus")]:::obs
-    LK_B[("Loki")]:::obs
-    TP_B[("Tempo")]:::obs
-    GF_B["Grafana"]:::obs
+  %% DR Site (Passive)
+  subgraph DC_B["Secondary DC — Passive/DR"]
+    GW_B["API Gateway (Standby)"]:::core
+    PAY_B["Payments (Standby)"]:::core
+    DB_B[(CockroachDB — Cluster B\nCDC/backup from A\nRPO ≤ 5m)]:::data
+    EV_B[(Kafka Mirror / Replication)]:::data
+    OBJ_B[(MinIO Replica\nBucket Sync)]:::data
+    OTL_B[OTel Collectors]:::obs
+    PM_B[(Prometheus)]:::obs
+    AM_B[Alertmanager]:::obs
+    LK_B[(Loki)]:::obs
+    TP_B[(Tempo)]:::obs
+    GF_B[Grafana]:::obs
   end
 
-  %% External PSP/Bank zone
-  PSP[("External PSPs / Banks")]:::ext
+  %% Externals
+  PSP1[PSP 1]:::ext
+  PSP2[PSP 2]:::ext
+  BANK["Bank/Core Settl."]:::ext
+  SFTP["SFTP (Settlement Files)"]:::ext
 
-  %% Flows
-  U -->|HTTPS| GW
+  %% Edge path
+  U -->|HTTPS| WAF --> LB --> GW
+  GW --> IDP
   GW --> PAY
-  PAY --> ADP
-  ADP -->|API calls| PSP
-  PSP -->|"Webhooks (mTLS/HMAC + allowlist)"| GW
-  GW --> WH
+  GW --> WAL
 
-  %% Event-driven core
-  PAY -->|"Outbox→Produce"| EV
-  WH -->|Events| EV
+  %% Payments flow
+  PAY --> ADP_A
+  PAY --> ADP_B
+  PAY --> ADP_BANK
+  ADP_A <-->|mTLS+HMAC| PSP1
+  ADP_B <-->|mTLS+HMAC| PSP2
+  ADP_BANK <-->|mTLS/certs| BANK
+
+  %% Webhooks
+  PSP1 -->|Webhooks| WH
+  PSP2 -->|Webhooks| WH
+  WH --> EV
+
+  %% Events
+  PAY -->|Outbox→Produce| EV
   EV --> LED
   EV --> RCN
-  EV --> FRD
-  EV --> PAY
-
-  %% State & storage
-  PAY --> DB
-  LED --> DB
+  EV --> WAL
   RCN --> OBJ
-  PAY --> RDS
   WH --> OBJ
+  SFTP --> OBJ
+  RCN --> SFTP
 
-  %% Control plane
-  PAY -. "config/API" .-> FLG
-  ADP -. "config/API" .-> FLG
-  GW --> IDP
+  %% State
+  PAY --> DB
+  WAL --> DB
+  LED --> DB
+  PAY --> RDS
+
+  %% Security
   PAY --> KMS
-  ADP --> KMS
-  WH --> KMS
+  ADP_A --> KMS
+  ADP_B --> KMS
+  LED --> HSM
+  PAY --> FLG
+  ADP_A --> FLG
+  ADP_B --> FLG
 
-  %% Observability wiring
+  %% Observability
   GW --> OTL
   PAY --> OTL
-  ADP --> OTL
+  WAL --> OTL
+  ADP_A --> OTL
+  ADP_B --> OTL
   LED --> OTL
   WH --> OTL
   RCN --> OTL
-  OTL --> PM
+  OTL --> PM --> AM
   OTL --> LK
   OTL --> TP
   PM --> GF
@@ -88,17 +122,18 @@ graph TB
   TP --> GF
 
   %% DR replication
-  EV -->|Mirror| EV_B
-  DB -->|"Async replication (RPO ≤ 5m)"| DB_B
-  OBJ -->|Bucket replication| OBJ_B
+  EV -->|"Mirror/Replicate"| EV_B
+  DB -->|"CDC/Backups (≤5m)"| DB_B
+  OBJ -->|Bucket Sync| OBJ_B
   PM --> PM_B
+  AM --> AM_B
   LK --> LK_B
   TP --> TP_B
 
-  classDef core fill:#f3f7ff,stroke:#4472c4,stroke-width:1px;
-  classDef state fill:#eefcf4,stroke:#2e8540,stroke-width:1px;
-  classDef data fill:#fff7e6,stroke:#b36b00,stroke-width:1px;
-  classDef obs fill:#f6e6ff,stroke:#7a3db8,stroke-width:1px;
-  classDef ctrl fill:#e8f0fe,stroke:#185abc,stroke-width:1px;
-  classDef edge fill:#e9ecef,stroke:#6c757d,stroke-width:1px;
-  classDef ext fill:#ffe6ea,stroke:#d6336c,stroke-width:1px;
+  classDef core fill:#e3f2fd,stroke:#1976d2,stroke-width:2px;
+  classDef state fill:#e8f5e8,stroke:#388e3c,stroke-width:2px;
+  classDef data fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
+  classDef obs fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+  classDef ctrl fill:#e0f2f1,stroke:#00796b,stroke-width:2px;
+  classDef edge fill:#fafafa,stroke:#616161,stroke-width:1px;
+  classDef ext fill:#ffebee,stroke:#c62828,stroke-width:2px;
