@@ -1,0 +1,42 @@
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant GW as API Gateway
+  participant P as Payments
+  participant A as PSP A
+  participant B as PSP B
+  participant PSP as External PSP
+  participant K as Kafka (Events/Webhooks)
+  participant L as Ledger
+  participant D as DB (CRDB)
+  participant R as Redis
+
+  C->>GW: POST /v1/payments (Idempotency-Key)
+  GW->>R: check(key)
+  alt hit & fingerprint match
+    R-->>GW: cached result
+    GW-->>C: replay response
+  else miss
+    GW->>P: forward (JWT validated)
+    P->>D: "begin, insert txn + outbox, commit"
+    P->>A: authorize()
+    A->>PSP: "/authorize (mTLS/HMAC)"
+    PSP-->>A: "200 approved (auth_id)"
+    A-->>P: auth ok
+    P->>K: publish AUTH_APPROVED
+    K->>L: "consume→append (hold)"
+    P->>A: capture(auth_id)
+    A->>PSP: /capture
+    PSP-->>A: 200 captured
+    A-->>P: capture ok
+    P->>D: update txn state=CAPTURED
+    P->>K: publish CAPTURED
+    K->>L: "append (release hold/confirm)"
+    P-->>GW: 201 Created
+    GW->>R: "store(key,fingerprint,result,TTL)"
+    GW-->>C: success
+  end
+
+  rect rgb(255,235,238)
+  Note over A,PSP: "if timeout/5xx → 2 retries (exp backoff + jitter), open CB, failover to B if flag enabled"
+  end

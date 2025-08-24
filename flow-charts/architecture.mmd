@@ -1,0 +1,139 @@
+%% /architecture.mmd
+graph TB
+  U[Mobile/Web/Partner Channels]:::edge
+
+  %% Active Site (Tehran)
+  subgraph DC_A["Primary DC — Tehran (Active)"]
+    WAF[WAF + DDoS]:::ctrl
+    LB[Load Balancer]:::ctrl
+    GW[API Gateway Cluster\nTLS 1.3, mTLS, OAuth2, HMAC\nRate limit, Idempotency, PII scrub]:::core
+
+    IDP["Keycloak (OIDC/SAML)\nMFA, RBAC, svc accounts"]:::ctrl
+    FLG[Feature Flags/Kill-switches\nAudit trail]:::ctrl
+
+    PAY["Payments Service\nOrchestration/Saga, Routing,\nValidation (in-process), Outbox"]:::core
+    WAL[Wallet Service\nBalances, Reservations,\nCash-in/out]:::core
+    FRD[Fraud Service\nVelocity checks, device hooks,\nrule engine integ.]:::edge
+
+    ADP_A[PSP Adapter A\nTimeout/Retry+Jitter, CB, Bulkhead]:::core
+    ADP_B[PSP Adapter B\nFailover, health metrics]:::core
+    ADP_BANK[Bank Adapter\nDirect APIs, settlement assist]:::core
+
+    WH[Webhook Ingest\nAllowlist + mTLS/HMAC\nStore-then-ack]:::core
+
+    LED["Ledger Service\nDouble-entry, append-only,\nidempotent(event_id)"]:::state
+    RCN[Reconciliation\nT+0 stream, T+1 files, breaks→DLQ]:::state
+
+    EV[(Kafka / Redpanda\nEvents + Webhook topics\nDLQ + Replay)]:::data
+    DB[(CockroachDB — OLTP\nPayments + Ledger journal\nCluster A)]:::data
+    RDS[(Redis Cluster\nIdempotency, rate-limit, locks)]:::data
+    OBJ[(MinIO / S3-compat\nWebhook payloads, T+1 files)]:::data
+
+    KMS["Vault (Secrets/KMS)"]:::ctrl
+    HSM["HSM (Tokenization/Keys)"]:::ctrl
+
+    OTL[OTel Collectors]:::obs
+    PM[(Prometheus)]:::obs
+    AM[Alertmanager]:::obs
+    LK[(Loki)]:::obs
+    TP[(Tempo)]:::obs
+    GF[Grafana]:::obs
+  end
+
+  %% DR Site (Passive)
+  subgraph DC_B["Secondary DC — Passive/DR"]
+    GW_B["API Gateway (Standby)"]:::core
+    PAY_B["Payments (Standby)"]:::core
+    DB_B[(CockroachDB — Cluster B\nCDC/backup from A\nRPO ≤ 5m)]:::data
+    EV_B[(Kafka Mirror / Replication)]:::data
+    OBJ_B[(MinIO Replica\nBucket Sync)]:::data
+    OTL_B[OTel Collectors]:::obs
+    PM_B[(Prometheus)]:::obs
+    AM_B[Alertmanager]:::obs
+    LK_B[(Loki)]:::obs
+    TP_B[(Tempo)]:::obs
+    GF_B[Grafana]:::obs
+  end
+
+  %% Externals
+  PSP1[PSP 1]:::ext
+  PSP2[PSP 2]:::ext
+  BANK["Bank/Core Settl."]:::ext
+  SFTP["SFTP (Settlement Files)"]:::ext
+
+  %% Edge path
+  U -->|HTTPS| WAF --> LB --> GW
+  GW --> IDP
+  GW --> PAY
+  GW --> WAL
+
+  %% Payments flow
+  PAY --> ADP_A
+  PAY --> ADP_B
+  PAY --> ADP_BANK
+  ADP_A <-->|mTLS+HMAC| PSP1
+  ADP_B <-->|mTLS+HMAC| PSP2
+  ADP_BANK <-->|mTLS/certs| BANK
+
+  %% Webhooks
+  PSP1 -->|Webhooks| WH
+  PSP2 -->|Webhooks| WH
+  WH --> EV
+
+  %% Events
+  PAY -->|Outbox→Produce| EV
+  EV --> LED
+  EV --> RCN
+  EV --> WAL
+  RCN --> OBJ
+  WH --> OBJ
+  SFTP --> OBJ
+  RCN --> SFTP
+
+  %% State
+  PAY --> DB
+  WAL --> DB
+  LED --> DB
+  PAY --> RDS
+
+  %% Security
+  PAY --> KMS
+  ADP_A --> KMS
+  ADP_B --> KMS
+  LED --> HSM
+  PAY --> FLG
+  ADP_A --> FLG
+  ADP_B --> FLG
+
+  %% Observability
+  GW --> OTL
+  PAY --> OTL
+  WAL --> OTL
+  ADP_A --> OTL
+  ADP_B --> OTL
+  LED --> OTL
+  WH --> OTL
+  RCN --> OTL
+  OTL --> PM --> AM
+  OTL --> LK
+  OTL --> TP
+  PM --> GF
+  LK --> GF
+  TP --> GF
+
+  %% DR replication
+  EV -->|"Mirror/Replicate"| EV_B
+  DB -->|"CDC/Backups (≤5m)"| DB_B
+  OBJ -->|Bucket Sync| OBJ_B
+  PM --> PM_B
+  AM --> AM_B
+  LK --> LK_B
+  TP --> TP_B
+
+  classDef core fill:#e3f2fd,stroke:#1976d2,stroke-width:2px;
+  classDef state fill:#e8f5e8,stroke:#388e3c,stroke-width:2px;
+  classDef data fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
+  classDef obs fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+  classDef ctrl fill:#e0f2f1,stroke:#00796b,stroke-width:2px;
+  classDef edge fill:#fafafa,stroke:#616161,stroke-width:1px;
+  classDef ext fill:#ffebee,stroke:#c62828,stroke-width:2px;
