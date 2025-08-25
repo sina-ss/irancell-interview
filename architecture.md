@@ -13,6 +13,7 @@
 [![sequence-happy-path](https://github.com/sina-ss/irancell-interview/blob/main/images/sequence-happy-path.png?raw=true)](https://github.com/sina-ss/irancell-interview/blob/main/images/sequence-happy-path.png?raw=true)
 **Network & Security Zones:** `</network-security.mmd`
 [![network-security](https://github.com/sina-ss/irancell-interview/blob/main/images/network-security.png?raw=true)](https://github.com/sina-ss/irancell-interview/blob/main/images/network-security.png?raw=true)
+
 ## 1. Core Component Responsibilities
 
 **Edge & Control**
@@ -274,29 +275,29 @@ If λ = 300 rps, and concurrent users N = 400, then average time in system `W = 
 
 ### 5.1 Resource Allocation Matrix (initial sizing)
 
-| Layer        | Component          |             Replicas | CPU/Pod |   Mem/Pod | Notes                                           |
-| ------------ | ------------------ | -------------------: | ------: | --------: | ----------------------------------------------- |
-| Edge         | WAF/LB             |              managed |      — |        — | Provider/infra service                          |
-| Gateway      | API Gateway        |                 4–6 |  1 vCPU | 1.5–2 GB | HPA @60% CPU; sticky for idempotency cache hits |
-| Control      | Keycloak           |                    2 |       1 |      2 GB | External DB; session cache in Redis (short TTL) |
-| Orchestrator | Payments           |                 6–8 |    1–2 |   2–3 GB | HPA; DB pool 60–100; outbox relayer x2         |
-| Domain       | Wallet             |                 3–4 |       1 |      2 GB | DB pool 40–60                                  |
-| Domain       | Fraud              |                 2–3 |       1 |      2 GB | Cache heavy, low write                          |
-| Integration  | Adapters (per PSP) |                 3–4 |  0.5–1 |   1–2 GB | Separate pools, CB/bulkhead                     |
-| Async        | Webhook Ingest     |                 3–4 |  0.5–1 |   1–2 GB | Kafka producers; DLQ consumer x2                |
-| Finance      | Ledger             |                 3–4 |       1 |      2 GB | Append-only; index/write optimized              |
-| Events       | Kafka              |            3 brokers |       4 |  8–16 GB | 6–8 partitions/topic to start; ISR=3           |
-| Cache        | Redis Cluster      |          3 primaries |       2 |  8–16 GB | AOF on; 25–50k OPS headroom                    |
-| OLTP         | CRDB**A**    |              5 nodes |    4–8 | 16–32 GB | NVMe SSD; 15–20k TPS write headroom            |
-| OLTP         | CRDB**B**    |           3–5 nodes |    4–8 | 16–32 GB | CDC/backup from A                               |
-| Object       | MinIO              |                 3–4 |       2 |  8–16 GB | Erasure coding; versioning on                   |
-| Obs          | OTEL               |                 2–3 |     0.5 | 0.5–1 GB | Daemonset/sidecar mix                           |
+| Layer        | Component          |             Replicas | CPU/Pod |  Mem/Pod | Notes                                           |
+| ------------ | ------------------ | -------------------: | ------: | -------: | ----------------------------------------------- |
+| Edge         | WAF/LB             |              managed |       — |        — | Provider/infra service                          |
+| Gateway      | API Gateway        |                  4–6 |  1 vCPU | 1.5–2 GB | HPA @60% CPU; sticky for idempotency cache hits |
+| Control      | Keycloak           |                    2 |       1 |     2 GB | External DB; session cache in Redis (short TTL) |
+| Orchestrator | Payments           |                  6–8 |     1–2 |   2–3 GB | HPA; DB pool 60–100; outbox relayer x2          |
+| Domain       | Wallet             |                  3–4 |       1 |     2 GB | DB pool 40–60                                   |
+| Domain       | Fraud              |                  2–3 |       1 |     2 GB | Cache heavy, low write                          |
+| Integration  | Adapters (per PSP) |                  3–4 |   0.5–1 |   1–2 GB | Separate pools, CB/bulkhead                     |
+| Async        | Webhook Ingest     |                  3–4 |   0.5–1 |   1–2 GB | Kafka producers; DLQ consumer x2                |
+| Finance      | Ledger             |                  3–4 |       1 |     2 GB | Append-only; index/write optimized              |
+| Events       | Kafka              |            3 brokers |       4 |  8–16 GB | 6–8 partitions/topic to start; ISR=3            |
+| Cache        | Redis Cluster      |          3 primaries |       2 |  8–16 GB | AOF on; 25–50k OPS headroom                     |
+| OLTP         | CRDB**A**          |              5 nodes |     4–8 | 16–32 GB | NVMe SSD; 15–20k TPS write headroom             |
+| OLTP         | CRDB**B**          |            3–5 nodes |     4–8 | 16–32 GB | CDC/backup from A                               |
+| Object       | MinIO              |                  3–4 |       2 |  8–16 GB | Erasure coding; versioning on                   |
+| Obs          | OTEL               |                  2–3 |     0.5 | 0.5–1 GB | Daemonset/sidecar mix                           |
 | Obs          | Prometheus         |               2 (HA) |       4 |  8–16 GB | Remote write optional                           |
-| Obs          | Loki               | 3 (ingester/querier) |    2–4 |  8–16 GB | Retention 30–90 days hot                       |
-| Obs          | Tempo              |                    3 |    2–4 |  8–16 GB | 10% parent-based sampling                       |
-| Obs          | Alertmanager       |                    2 |     0.5 |      1 GB | HA mesh                                         |
-| Sec          | Vault              |                 2–3 |       2 |      8 GB | Integrated HSM where available                  |
-| Sec          | HSM                |              HA pair |      — |        — | Network HSM latency budget < 5 ms               |
+| Obs          | Loki               | 3 (ingester/querier) |     2–4 |  8–16 GB | Retention 30–90 days hot                        |
+| Obs          | Tempo              |                    3 |     2–4 |  8–16 GB | 10% parent-based sampling                       |
+| Obs          | Alertmanager       |                    2 |     0.5 |     1 GB | HA mesh                                         |
+| Sec          | Vault              |                  2–3 |       2 |     8 GB | Integrated HSM where available                  |
+| Sec          | HSM                |              HA pair |       — |        — | Network HSM latency budget < 5 ms               |
 
 ### 5.2 Performance Projections (starting targets)
 

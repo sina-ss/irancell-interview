@@ -1,42 +1,88 @@
+%% /happy-path.mmd - High-Level Payment Flow
 sequenceDiagram
   autonumber
   participant C as Client
+  participant RL as Rate Limiter
+  participant LB as Load Balancer
   participant GW as API Gateway
-  participant P as Payments
-  participant A as PSP A
-  participant B as PSP B
-  participant PSP as External PSP
-  participant K as Kafka (Events/Webhooks)
-  participant L as Ledger
-  participant D as DB (CRDB)
-  participant R as Redis
+  participant FR as Fraud Detection
+  participant P as Payments Service
+  participant PSP as PSP Gateway
+  participant K as Kafka
+  participant L as Ledger Service
+  participant DBW as PostgreSQL Master (Write)
+  participant DBR as PostgreSQL Read
+  participant R as Redis Cache
 
-  C->>GW: POST /v1/payments (Idempotency-Key)
-  GW->>R: check(key)
-  alt hit & fingerprint match
-    R-->>GW: cached result
-    GW-->>C: replay response
-  else miss
-    GW->>P: forward (JWT validated)
-    P->>D: "begin, insert txn + outbox, commit"
-    P->>A: authorize()
-    A->>PSP: "/authorize (mTLS/HMAC)"
-    PSP-->>A: "200 approved (auth_id)"
-    A-->>P: auth ok
-    P->>K: publish AUTH_APPROVED
-    K->>L: "consume→append (hold)"
-    P->>A: capture(auth_id)
-    A->>PSP: /capture
-    PSP-->>A: 200 captured
-    A-->>P: capture ok
-    P->>D: update txn state=CAPTURED
-    P->>K: publish CAPTURED
-    K->>L: "append (release hold/confirm)"
-    P-->>GW: 201 Created
-    GW->>R: "store(key,fingerprint,result,TTL)"
-    GW-->>C: success
+  %% Initial Request & Rate Limiting
+  C->>RL: POST /v1/payments
+  RL->>R: Check rate limit
+  alt Rate limit exceeded
+    RL-->>C: 429 Too Many Requests
+  else Within limits
+    RL->>LB: Forward request
+    LB->>GW: Route to gateway
   end
 
-  rect rgb(255,235,238)
-  Note over A,PSP: "if timeout/5xx → 2 retries (exp backoff + jitter), open CB, failover to B if flag enabled"
+  %% Idempotency Check
+  GW->>R: Check idempotency key
+  alt Duplicate request
+    R-->>GW: Cached response
+    GW-->>C: Return cached result
+  else New request
+    GW->>P: Process payment (JWT validated)
+  end
+
+  %% Fraud Detection
+  P->>FR: Validate transaction
+  FR->>DBR: Read user history
+  FR->>R: Check velocity limits
+  FR-->>P: Risk score
+  alt High risk score
+    P-->>GW: Transaction rejected
+    GW-->>C: 403 Fraud detected
+  else Acceptable risk
+    P->>P: Continue processing
+  end
+
+  %% Payment Processing
+  P->>DBW: Begin transaction
+  P->>DBW: Insert payment record
+  P->>PSP: Authorize payment
+  
+  alt PSP Success
+    PSP-->>P: Authorization approved
+    P->>DBW: Update status = AUTHORIZED
+    P->>K: Publish PAYMENT_AUTHORIZED
+    
+    %% Capture Phase
+    P->>PSP: Capture payment
+    PSP-->>P: Capture confirmed
+    P->>DBW: Update status = CAPTURED
+    P->>DBW: Commit transaction
+    
+    %% Async Processing
+    P->>K: Publish PAYMENT_CAPTURED
+    K-->>L: Process ledger entry
+    L->>DBW: Record double-entry
+    
+    %% Success Response
+    P-->>GW: Payment successful
+    GW->>R: Cache response
+    GW-->>C: 201 Payment created
+    
+  else PSP Failure
+    PSP-->>P: Authorization failed
+    P->>DBW: Rollback transaction
+    P->>K: Publish PAYMENT_FAILED
+    P-->>GW: Payment failed
+    GW-->>C: 402 Payment required
+  end
+
+  %% Async Reconciliation
+  rect rgb(240,248,255)
+    Note over K,L: Async processes continue
+    K-->>K: Notification events
+    K-->>K: Settlement events
+    K-->>K: Reconciliation events
   end

@@ -1,80 +1,143 @@
+%% /network-security.mmd - High-Level Network Architecture
 graph TB
-  subgraph DMZ["DMZ Network"]
-    WAF[WAF + DDoS]:::ctrl
-    LB[Load Balancer]:::ctrl
+  subgraph EDGE["Edge Network (Public)"]
+    Internet[Internet Traffic]:::ext
+    CDN[CDN/Static Assets]:::ctrl
+    WAF[WAF + DDoS Protection]:::ctrl
+    RL[Rate Limiter]:::ctrl
+  end
+
+  subgraph DMZ["DMZ Network (Semi-trusted)"]
+    LB[NGINX Load Balancer]:::ctrl
     AG[API Gateway Cluster]:::ctrl
   end
 
-  subgraph APP["Application Network"]
-    PS[Payments]:::core
-    WS[Wallet]:::core
-    LS[Ledger]:::core
-    FR[Fraud]:::core
-    FLG[Feature Flags]:::ctrl
-    IDP[Keycloak]:::ctrl
+  subgraph APP_NET["Application Network (Private)"]
+    subgraph AZ1["Availability Zone 1"]
+      PS1[Payment Services]:::core
+      WS1[Wallet Services]:::core
+      FR1[Fraud Detection]:::core
+      LS1[Ledger Services]:::core
+    end
+    
+    subgraph AZ2["Availability Zone 2"]
+      PS2[Payment Services]:::core
+      WS2[Wallet Services]:::core
+      FR2[Fraud Detection]:::core
+      LS2[Ledger Services]:::core
+    end
   end
 
-  subgraph INTEG["Integration Network"]
-    ADA[PSP Adapter A]:::core
-    ADB[PSP Adapter B]:::core
+  subgraph INTEG["Integration Network (Isolated)"]
+    PSP_A[PSP Adapter A]:::core
+    PSP_B[PSP Adapter B]:::core
+    BANK[Bank Adapter]:::core
     WH[Webhook Handler]:::core
-    SFTP[SFTP - Settlement]:::ctrl
   end
 
-  subgraph DATA["Data Network"]
-    CDB[(CockroachDB Cluster A)]:::data
-    KFK[(Kafka / Redpanda)]:::data
-    RDS[(Redis Cluster)]:::data
-    OBJ[(MinIO)]:::data
+  subgraph DATA_NET["Data Network (Secured)"]
+    subgraph DB_CLUSTER["PostgreSQL Cluster"]
+      PG_MASTER[(Master - Writes)]:::data
+      PG_STANDBY[(Standby Master)]:::data
+      PG_READ1[(Read Replica 1)]:::data
+      PG_READ2[(Read Replica 2)]:::data
+    end
+    
+    KAFKA[(Kafka Cluster)]:::data
+    REDIS[(Redis Cluster)]:::data
+    S3[(Object Storage)]:::data
   end
 
-  subgraph SEC["Security Services"]
-    HSM[HSM - Tokenization]:::ctrl
-    VLT["Vault - Secrets/KMS"]:::ctrl
-    SIEM["SIEM / Log Sink (optional)"]:::obs
+  subgraph SEC_NET["Security Network (Hardened)"]
+    HSM[HSM - Encryption]:::ctrl
+    VAULT[Vault - Secrets]:::ctrl
+    IDP[Keycloak - Identity]:::ctrl
   end
 
-  subgraph MON["Observability (LGTM)"]
-    OTL[OTel Collectors]:::obs
-    PM[(Prometheus)]:::obs
-    AM[Alertmanager]:::obs
-    LK[(Loki)]:::obs
-    TP[(Tempo)]:::obs
-    GF[Grafana]:::obs
+  subgraph MON_NET["Monitoring Network (LGTM Stack - No Prometheus)"]
+    OTL[OpenTelemetry Collectors]:::obs
+    APM[APM - Application Metrics]:::obs
+    LOKI[(Loki - Log Aggregation)]:::obs
+    TEMPO[(Tempo - Distributed Tracing)]:::obs
+    ALERT[Alert Manager]:::obs
+    GRAF[Grafana - Unified Dashboards]:::obs
   end
 
-  Internet --> WAF --> LB --> AG
-  AG -->|"mTLS+JWT"| PS
-  AG -->|"mTLS+JWT"| WS
-  PS -->|mTLS| LS
-  PS -->|mTLS| FR
-  PS -->|TLS| CDB
-  PS -->|SASL_SSL| KFK
-  PS -->|TLS| RDS
-  PS -->|HTTPS| VLT
-  LS --> HSM
-
-  ADA <-->|"mTLS+HMAC"| Internet
-  ADB <-->|"mTLS+HMAC"| Internet
-  WH <-->|"Allowlist + mTLS/HMAC"| Internet
-  SFTP <-->|SSH| Internet
-
-  %% Observability
+  %% Traffic Flow
+  Internet -->|HTTPS| CDN
+  Internet -->|HTTPS| WAF
+  WAF --> RL
+  RL -->|Rate Limited| LB
+  LB -->|Round Robin| AG
+  
+  %% API Gateway to Services
+  AG -->|mTLS + JWT| PS1
+  AG -->|mTLS + JWT| PS2
+  AG -->|OAuth2| IDP
+  
+  %% Service Communications
+  PS1 <-->|Internal| FR1
+  PS2 <-->|Internal| FR2
+  PS1 -->|Write| PG_MASTER
+  PS2 -->|Write| PG_MASTER
+  PS1 -->|Read| PG_READ1
+  PS2 -->|Read| PG_READ2
+  
+  %% Database Replication
+  PG_MASTER -.->|Sync Replication| PG_STANDBY
+  PG_MASTER -.->|Async Replication| PG_READ1
+  PG_MASTER -.->|Async Replication| PG_READ2
+  
+  %% External Integrations
+  PSP_A <-->|mTLS + HMAC| Internet
+  PSP_B <-->|mTLS + HMAC| Internet
+  BANK <-->|VPN/MPLS| Internet
+  WH <-->|Webhook mTLS| Internet
+  
+  %% Message Flow
+  PS1 -->|Publish| KAFKA
+  PS2 -->|Publish| KAFKA
+  KAFKA -->|Subscribe| LS1
+  KAFKA -->|Subscribe| LS2
+  
+  %% Cache Access
+  AG --> REDIS
+  PS1 --> REDIS
+  PS2 --> REDIS
+  FR1 --> REDIS
+  FR2 --> REDIS
+  
+  %% Security Integration
+  PS1 --> VAULT
+  PS2 --> VAULT
+  LS1 --> HSM
+  LS2 --> HSM
+  
+  %% Monitoring - OpenTelemetry to LGTM Stack
+  PS1 --> OTL
+  PS2 --> OTL
+  FR1 --> OTL
+  FR2 --> OTL
   AG --> OTL
-  PS --> OTL
-  WS --> OTL
-  LS --> OTL
-  FR --> OTL
-  WH --> OTL
-  OTL --> PM --> AM
-  OTL --> LK
-  OTL --> TP
-  PM --> GF
-  LK --> GF
-  TP --> GF
-  LK --> SIEM
+  
+  OTL -->|Metrics| APM
+  OTL -->|Logs| LOKI
+  OTL -->|Traces| TEMPO
+  APM -->|Error > 4%| ALERT
+  APM --> GRAF
+  LOKI --> GRAF
+  TEMPO --> GRAF
+  
+  %% Network Zones
+  style EDGE fill:#ffe0e0,stroke:#c62828,stroke-width:3px
+  style DMZ fill:#fff3e0,stroke:#f57c00,stroke-width:3px
+  style APP_NET fill:#e3f2fd,stroke:#1976d2,stroke-width:3px
+  style DATA_NET fill:#e8f5e8,stroke:#388e3c,stroke-width:3px
+  style SEC_NET fill:#fce4ec,stroke:#c2185b,stroke-width:3px
+  style MON_NET fill:#f3e5f5,stroke:#7b1fa2,stroke-width:3px
 
-  classDef ctrl fill:#e0f2f1,stroke:#00796b,stroke-width:2px;
-  classDef data fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
-  classDef obs fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
-  classDef core fill:#e3f2fd,stroke:#1976d2,stroke-width:2px;
+  classDef ctrl fill:#e0f2f1,stroke:#00796b,stroke-width:2px
+  classDef data fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+  classDef obs fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+  classDef core fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+  classDef ext fill:#ffebee,stroke:#c62828,stroke-width:2px
