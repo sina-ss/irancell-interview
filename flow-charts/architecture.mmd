@@ -1,134 +1,197 @@
-%% /architecture.mmd
+%% /architecture.mmd - Updated for MTN Irancell Requirements
 graph TB
   U[Mobile/Web/Partner Channels]:::edge
 
-  %% Active Site (Tehran)
-  subgraph DC_A["Primary DC — Tehran (Active)"]
-    WAF[WAF + DDoS]:::ctrl
-    LB[Load Balancer]:::ctrl
-    GW[API Gateway Cluster\nTLS 1.3, mTLS, OAuth2, HMAC\nRate limit, Idempotency, PII scrub]:::core
+  %% Active Site (Tehran) - Availability Zone 1
+  subgraph DC_A["Primary DC — Tehran AZ-1 (Active)"]
+    %% Edge Layer
+    WAF[WAF + DDoS Protection]:::ctrl
+    RL[Rate Limiter\nToken Bucket/Sliding Window\nPer-client limits]:::ctrl
+    LB[NGINX Load Balancer\n100K req capacity\nHealth checks, Sticky sessions]:::ctrl
+    
+    %% API Gateway Cluster
+    GW[API Gateway Cluster\nTLS 1.3, mTLS, OAuth2\nIdempotency, PII scrubbing]:::core
 
-    IDP["Keycloak (OIDC/SAML)\nMFA, RBAC, svc accounts"]:::ctrl
-    FLG[Feature Flags/Kill-switches\nAudit trail]:::ctrl
+    %% Auth & Control
+    IDP["Keycloak (OIDC/SAML)\nMFA, RBAC, Service accounts"]:::ctrl
+    FLG[Feature Flags/Kill-switches\nAudit trail, A/B testing]:::ctrl
 
-    PAY["Payments Service\nOrchestration/Saga, Routing,\nValidation (in-process), Outbox"]:::core
-    WAL[Wallet Service\nBalances, Reservations,\nCash-in/out]:::core
-    FRD[Fraud Service\nVelocity checks, device hooks,\nrule engine integ.]:::edge
+    %% Core Services
+    PAY["Payments Service\nOrchestration/Saga Pattern\nValidation, Outbox pattern"]:::core
+    WAL[Wallet Service\nBalances, Reservations\nCash-in/out operations]:::core
+    
+    %% Enhanced Fraud Detection
+    FRD[Fraud Detection Service\nML Risk Scoring\nVelocity Checks\nDevice Fingerprinting\nRule Engine Integration]:::edge
+    
+    %% PSP Adapters
+    ADP_A[PSP Adapter A\nTimeout/Retry+Jitter\nCircuit Breaker, Bulkhead]:::core
+    ADP_B[PSP Adapter B\nFailover, Health metrics]:::core
+    ADP_BANK[Bank Adapter\nDirect APIs, Settlement]:::core
 
-    ADP_A[PSP Adapter A\nTimeout/Retry+Jitter, CB, Bulkhead]:::core
-    ADP_B[PSP Adapter B\nFailover, health metrics]:::core
-    ADP_BANK[Bank Adapter\nDirect APIs, settlement assist]:::core
+    %% Webhook Processing
+    WH[Webhook Ingest\nAllowlist + mTLS/HMAC\nStore-then-ack pattern]:::core
 
-    WH[Webhook Ingest\nAllowlist + mTLS/HMAC\nStore-then-ack]:::core
+    %% Financial Services
+    LED["Ledger Service\nDouble-entry bookkeeping\nAppend-only, Idempotent"]:::state
+    RCN[Reconciliation Service\nT+0 stream, T+1 batch\nBreak detection → DLQ]:::state
 
-    LED["Ledger Service\nDouble-entry, append-only,\nidempotent(event_id)"]:::state
-    RCN[Reconciliation\nT+0 stream, T+1 files, breaks→DLQ]:::state
+    %% Message Broker (Enhanced)
+    EV[(Kafka Cluster\nEvent streaming\nAsync processing\nDLQ + Replay capability\nPartitioned for scale)]:::data
+    
+    %% PostgreSQL Master
+    DB_MASTER[(PostgreSQL Master\nWrite operations only\nSynchronous replication\nOLTP optimized)]:::data
+    
+    %% Read Replicas
+    DB_READ1[(PostgreSQL Read Replica 1\nRead operations\nAsync replication)]:::data
+    
+    %% Cache Layer
+    RDS[(Redis Cluster\nRate limit counters\nIdempotency keys\nDistributed locks\nSession cache)]:::data
+    
+    %% Object Storage
+    OBJ[(MinIO / S3-compat\nWebhook payloads\nSettlement files\nAudit logs)]:::data
 
-    EV[(Kafka / Redpanda\nEvents + Webhook topics\nDLQ + Replay)]:::data
-    DB[(CockroachDB — OLTP\nPayments + Ledger journal\nCluster A)]:::data
-    RDS[(Redis Cluster\nIdempotency, rate-limit, locks)]:::data
-    OBJ[(MinIO / S3-compat\nWebhook payloads, T+1 files)]:::data
+    %% Security
+    KMS["Vault (Secrets/KMS)\nRotation policies"]:::ctrl
+    HSM["HSM (Tokenization)\nPIN/PAN encryption"]:::ctrl
 
-    KMS["Vault (Secrets/KMS)"]:::ctrl
-    HSM["HSM (Tokenization/Keys)"]:::ctrl
-
-    OTL[OTel Collectors]:::obs
-    PM[(Prometheus)]:::obs
-    AM[Alertmanager]:::obs
-    LK[(Loki)]:::obs
-    TP[(Tempo)]:::obs
-    GF[Grafana]:::obs
+    %% Observability Stack (No Prometheus)
+    OTL[OpenTelemetry Collectors\nMetrics, Traces, Logs]:::obs
+    APM[Application Performance Monitor\nError rate tracking\nTransaction metrics\nBusiness KPIs]:::obs
+    LOKI[(Loki\nLog Aggregation\nFull-text search)]:::obs
+    TEMPO[(Tempo\nDistributed Tracing\nLatency analysis)]:::obs
+    AM[Alert Manager\nError rate > 4% alerts\nBusiness alerts]:::obs
+    GRAF[Grafana Dashboards\nUnified visualization\nLoki + Tempo + APM]:::obs
   end
 
-  %% DR Site (Passive)
-  subgraph DC_B["Secondary DC — Passive/DR"]
-    GW_B["API Gateway (Standby)"]:::core
-    PAY_B["Payments (Standby)"]:::core
-    DB_B[(CockroachDB — Cluster B\nCDC/backup from A\nRPO ≤ 5m)]:::data
-    EV_B[(Kafka Mirror / Replication)]:::data
-    OBJ_B[(MinIO Replica\nBucket Sync)]:::data
-    OTL_B[OTel Collectors]:::obs
-    PM_B[(Prometheus)]:::obs
-    AM_B[Alertmanager]:::obs
-    LK_B[(Loki)]:::obs
-    TP_B[(Tempo)]:::obs
-    GF_B[Grafana]:::obs
+  %% Secondary Site - Availability Zone 2
+  subgraph DC_B["Secondary DC — Tehran AZ-2 (Active Replica)"]
+    LB_B[NGINX Load Balancer\nStandby/Active]:::ctrl
+    GW_B["API Gateway (Active)"]:::core
+    PAY_B["Payments Service (Active)\nAuto-scaled replicas"]:::core
+    
+    DB_READ2[(PostgreSQL Read Replica 2\nRead operations\nAsync replication)]:::data
+    DB_STANDBY[(PostgreSQL Standby Master\nSynchronous replication\nAutomatic failover ready)]:::data
+    
+    EV_B[(Kafka Replica\nMirrored topics)]:::data
+    RDS_B[(Redis Replica)]:::data
+    
+    OTL_B[OpenTelemetry Collectors]:::obs
+    LOKI_B[(Loki Replica)]:::obs
+    TEMPO_B[(Tempo Replica)]:::obs
+    GRAF_B[Grafana (Standby)]:::obs
   end
 
-  %% Externals
-  PSP1[PSP 1]:::ext
-  PSP2[PSP 2]:::ext
-  BANK["Bank/Core Settl."]:::ext
-  SFTP["SFTP (Settlement Files)"]:::ext
+  %% DR Site (Passive) - Different Region
+  subgraph DC_DR["DR Site — Different Region (Passive)"]
+    DB_DR[(PostgreSQL DR\nAsync replication\nRPO ≤ 5 min)]:::data
+    EV_DR[(Kafka DR Mirror)]:::data
+    OBJ_DR[(Object Storage Replica)]:::data
+    FULL_DR[Complete Service Stack\n(Cold standby)]:::core
+  end
 
-  %% Edge path
-  U -->|HTTPS| WAF --> LB --> GW
+  %% External Systems
+  PSP1[PSP 1\nPayment Gateway]:::ext
+  PSP2[PSP 2\nBackup Gateway]:::ext
+  BANK["Bank/Core Banking\nSettlement System"]:::ext
+  SFTP["SFTP Server\nSettlement Files"]:::ext
+
+  %% Traffic Flow
+  U -->|HTTPS| WAF
+  WAF --> RL
+  RL -->|Rate limited| LB
+  LB -->|Round-robin/Weighted| GW
+  LB -.->|Failover| LB_B
+  
+  %% API Gateway Routes
   GW --> IDP
   GW --> PAY
   GW --> WAL
+  GW --> FRD
 
-  %% Payments flow
-  PAY --> ADP_A
-  PAY --> ADP_B
-  PAY --> ADP_BANK
+  %% Payment Processing
+  PAY -->|Validate| FRD
+  FRD -->|Risk Score| PAY
+  PAY -->|Route| ADP_A
+  PAY -->|Failover| ADP_B
+  PAY -->|Direct debit| ADP_BANK
+  
+  %% External Integrations
   ADP_A <-->|mTLS+HMAC| PSP1
   ADP_B <-->|mTLS+HMAC| PSP2
-  ADP_BANK <-->|mTLS/certs| BANK
+  ADP_BANK <-->|Secure API| BANK
 
-  %% Webhooks
+  %% Webhook Processing
   PSP1 -->|Webhooks| WH
   PSP2 -->|Webhooks| WH
-  WH --> EV
+  WH -->|Publish| EV
 
-  %% Events
-  PAY -->|Outbox→Produce| EV
-  EV --> LED
-  EV --> RCN
-  EV --> WAL
-  RCN --> OBJ
-  WH --> OBJ
-  SFTP --> OBJ
+  %% Event-Driven Architecture
+  PAY -->|Produce events| EV
+  EV -->|Consume| LED
+  EV -->|Consume| RCN
+  EV -->|Consume| WAL
+  RCN -->|Store| OBJ
+  WH -->|Archive| OBJ
+  SFTP <--> OBJ
   RCN --> SFTP
 
-  %% State
-  PAY --> DB
-  WAL --> DB
-  LED --> DB
+  %% Database Operations
+  PAY -->|Write| DB_MASTER
+  WAL -->|Write| DB_MASTER
+  LED -->|Write| DB_MASTER
+  
+  PAY -->|Read| DB_READ1
+  WAL -->|Read| DB_READ1
+  
+  %% Database Replication
+  DB_MASTER -->|Sync replication| DB_STANDBY
+  DB_MASTER -->|Async replication| DB_READ1
+  DB_MASTER -->|Async replication| DB_READ2
+  DB_MASTER -->|Async replication| DB_DR
+  
+  %% Cache Operations
   PAY --> RDS
+  GW --> RDS
+  RL --> RDS
+  FRD --> RDS
 
-  %% Security
+  %% Security Integration
   PAY --> KMS
   ADP_A --> KMS
   ADP_B --> KMS
   LED --> HSM
   PAY --> FLG
-  ADP_A --> FLG
-  ADP_B --> FLG
-
-  %% Observability
+  
+  %% Observability (OpenTelemetry + Loki + Tempo + Grafana)
   GW --> OTL
   PAY --> OTL
   WAL --> OTL
+  FRD --> OTL
   ADP_A --> OTL
   ADP_B --> OTL
   LED --> OTL
-  WH --> OTL
   RCN --> OTL
-  OTL --> PM --> AM
-  OTL --> LK
-  OTL --> TP
-  PM --> GF
-  LK --> GF
-  TP --> GF
-
-  %% DR replication
-  EV -->|"Mirror/Replicate"| EV_B
-  DB -->|"CDC/Backups (≤5m)"| DB_B
-  OBJ -->|Bucket Sync| OBJ_B
-  PM --> PM_B
-  AM --> AM_B
-  LK --> LK_B
-  TP --> TP_B
+  WH --> OTL
+  
+  OTL -->|Metrics| APM
+  OTL -->|Logs| LOKI
+  OTL -->|Traces| TEMPO
+  APM -->|Error rate > 4%| AM
+  APM --> GRAF
+  LOKI --> GRAF
+  TEMPO --> GRAF
+  
+  %% Cross-AZ Replication
+  EV -->|Mirror| EV_B
+  RDS -->|Replicate| RDS_B
+  OTL --> OTL_B
+  LOKI -->|Replicate| LOKI_B
+  TEMPO -->|Replicate| TEMPO_B
+  APM --> GRAF_B
+  
+  %% DR Replication
+  EV_B -->|Async Mirror| EV_DR
+  OBJ -->|Bucket sync| OBJ_DR
 
   classDef core fill:#e3f2fd,stroke:#1976d2,stroke-width:2px;
   classDef state fill:#e8f5e8,stroke:#388e3c,stroke-width:2px;
